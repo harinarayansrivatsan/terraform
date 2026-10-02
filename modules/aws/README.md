@@ -57,17 +57,7 @@ brew install eksctl
 
 ### Required AWS IAM permissions
 
-The IAM user or role running Terraform needs the following managed policies (or equivalent inline policies):
-
-| Policy | Purpose |
-|--------|---------|
-| `AmazonEKSClusterPolicy` | Create and manage EKS clusters |
-| `AmazonVPCFullAccess` | Create VPC, subnets, route tables, NAT |
-| `AmazonRDSFullAccess` | Create and manage RDS instances |
-| `AmazonElastiCacheFullAccess` | Create ElastiCache clusters |
-| `AmazonS3FullAccess` | Create S3 buckets and VPC endpoints |
-| `IAMFullAccess` | Create IRSA roles and policies |
-| `ElasticLoadBalancingFullAccess` | Create ALB via Terraform |
+The IAM user or role running Terraform needs `AdministratorAccess`, or `PowerUserAccess` plus `IAMFullAccess`. `PowerUserAccess` alone fails at the first IAM role the apply creates. For a custom policy, the IAM roles the deployment creates, and how to test access before the first apply, refer to [PERMISSIONS.md](PERMISSIONS.md).
 
 ### Authenticate
 
@@ -108,7 +98,7 @@ aws sts get-caller-identity   # verify
 
 After this, `terraform`, `kubectl`, `helm`, and all the `make` targets in this repo pick up the SSO credentials automatically via `AWS_PROFILE`.
 
-**IAM permissions note:** the policies listed in the table above must be attached to the **SSO permission set** (or federated role) you assume — not to you directly. Ask your AWS admin which permission set to use and confirm it covers those policies. The LangChain training account's `AdministratorAccessTraining` permission set already does.
+**IAM permissions note:** the policies in [PERMISSIONS.md](PERMISSIONS.md) must be attached to the **SSO permission set** (or federated role) you assume — not to you directly. Ask your AWS admin which permission set to use and confirm it covers those policies. The LangChain training account's `AdministratorAccessTraining` permission set already does.
 
 **Optional helper:** some sub-tooling in this repo (parallel test workers, scripts that assume a `[default]` block in `~/.aws/credentials`) doesn't honor `AWS_PROFILE`. For those, run `./infra/scripts/hydrate-creds.sh` after `aws sso login` to dump the temporary key/secret/session-token triple into `~/.aws/credentials [default]`. Re-run it whenever your SSO session expires.
 
@@ -525,7 +515,7 @@ make deploy
 
 ### Important notes
 
-- The bastion's IAM role has `AmazonSSMManagedInstanceCore` and `AmazonEKSClusterPolicy` attached. Add additional policies if you need the bastion to manage other AWS resources.
+- The bastion's IAM role has `AmazonSSMManagedInstanceCore` attached, plus an inline policy that allows `eks:DescribeCluster` and `eks:ListClusters`. Add additional policies if you need the bastion to manage other AWS resources.
 - The bastion lives in a **public subnet** (for SSM agent connectivity). It does not need a public IP if your VPC has VPC endpoints for SSM (`ssm`, `ssmmessages`, `ec2messages`).
 - When the EKS API is private, `terraform plan/apply` targeting EKS resources **must** be run from within the VPC (i.e., the bastion). Running from your laptop will timeout.
 
@@ -760,7 +750,7 @@ take final precedence.
 
 **Step 7 — Broken release recovery.** Checks the current Helm release status. If `pending-upgrade` (left by a Ctrl+C'd upgrade), rolls back automatically. If `failed` (common after a first deploy timeout), logs a warning and proceeds — Helm upgrade works fine on a failed release.
 
-**Step 8 — Helm upgrade.** Runs `helm upgrade --install` with `--server-side=false`. Server-side apply (Helm 3.14+ default) conflicts with the AWS Load Balancer Controller over ownership of `ingress.spec.rules` — client-side apply avoids this. Does **not** use `--wait` because the chart's post-install hooks and the operator's agent pods can take 10+ minutes to settle on new nodes.
+**Step 8 — Helm upgrade.** Runs `helm upgrade --install`, adding `--server-side=false` only when the installed Helm is 4.x. Server-side apply is a Helm 4 feature and its default for a fresh install, and it conflicts with the AWS Load Balancer Controller over ownership of `ingress.spec.rules`, so the deploy asks for client-side apply. Helm 3 has no such flag and applies client-side regardless, so the flag is omitted there. Does **not** use `--wait` because the chart's post-install hooks and the operator's agent pods can take 10+ minutes to settle on new nodes.
 
 **Step 9 — Core readiness.** Polls each core deployment with `kubectl rollout status --timeout=5m`:
 - `langsmith-frontend`, `langsmith-backend`, `langsmith-platform-backend`, `langsmith-ingest-queue`, `langsmith-queue`

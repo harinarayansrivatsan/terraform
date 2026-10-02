@@ -415,6 +415,13 @@ _tfvar_is_true "enable_fleet"              && { _enable_fleet=true;             
 _tfvar_is_true "enable_standalone_polly"   && { _enable_standalone_polly=true;   _tfvars_drive_addons=true; }
 _tfvar_is_true "enable_standalone_insights" && { _enable_standalone_insights=true; _tfvars_drive_addons=true; }
 _tfvar_is_true "enable_sandboxes"          && { _enable_sandboxes=true;          _tfvars_drive_addons=true; }
+# An explicit `enable_* = false` is still a flag. Only a tfvars with none of the
+# addon keys falls back to the interactive prompt or the files already on disk.
+for _k in enable_deployments enable_agent_builder enable_insights enable_polly \
+          enable_usage_telemetry enable_fleet enable_standalone_polly \
+          enable_standalone_insights enable_sandboxes; do
+  if [[ -n "$(_parse_tfvar "$_k")" ]]; then _tfvars_drive_addons=true; fi
+done
 
 _sandbox_host_image_tag=$(_parse_tfvar "sandbox_host_image_tag") || _sandbox_host_image_tag=""
 _sandbox_service_url_base_url=$(_parse_tfvar "sandbox_service_url_base_url") || _sandbox_service_url_base_url=""
@@ -865,18 +872,24 @@ else
 fi
 
 # ── In-cluster postgres/redis overrides ───────────────────────────────────────
+# values.yaml names the Secrets that k8s-bootstrap creates for Cloud SQL and
+# Memorystore. k8s-bootstrap creates them only for external services. The chart
+# uses existingSecretName whenever it is set, so clear it here, and the chart
+# creates its own in-cluster Secret.
 _external_services_block=""
 if [[ "$_postgres_source" == "in-cluster" ]]; then
   _external_services_block+="
 postgres:
   external:
-    enabled: false"
+    enabled: false
+    existingSecretName: \"\""
 fi
 if [[ "$_redis_source" == "in-cluster" ]]; then
   _external_services_block+="
 redis:
   external:
-    enabled: false"
+    enabled: false
+    existingSecretName: \"\""
 fi
 
 _sandbox_config_block=""

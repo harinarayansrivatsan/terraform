@@ -295,8 +295,12 @@ resource "kubernetes_secret_v1" "redis" {
     namespace = kubernetes_namespace_v1.langsmith.metadata[0].name
   }
 
+  # All three keys in both modes — the chart reads only the pair its mode needs, so
+  # switching modes is a values-file edit, not a terraform apply.
   data = {
-    connection_url = var.redis_connection_url
+    connection_url          = var.redis_connection_url
+    redis_cluster_node_uris = var.redis_cluster_node_uris
+    redis_cluster_password  = var.redis_cluster_password
   }
 
   type = "Opaque"
@@ -342,7 +346,18 @@ resource "kubernetes_secret_v1" "license" {
 # TLS automation infrastructure. Manages Let's Encrypt certificates.
 # ClusterIssuers are applied separately by helm/scripts/deploy.sh.
 
+# Orders cert-manager after the Envoy Gateway release. cert-manager looks for the
+# Gateway API CRDs only at startup, so one started before them never serves
+# Gateways even with the feature gate below.
+resource "terraform_data" "gateway_api_crds" {
+  input = var.envoy_gateway_version
+}
+
 resource "helm_release" "cert_manager" {
+  count = var.install_cert_manager ? 1 : 0
+
+  depends_on = [terraform_data.gateway_api_crds]
+
   name             = "cert-manager"
   namespace        = "cert-manager"
   create_namespace = true
@@ -371,6 +386,18 @@ resource "helm_release" "cert_manager" {
   set {
     name  = "controller.resources.limits.memory"
     value = "256Mi"
+  }
+
+  # Envoy Gateway: the HTTP-01 gatewayHTTPRoute solver, and the Gateway shim that
+  # issues the certificate a Gateway's cluster-issuer annotation asks for, both
+  # need Gateway API support. On the pinned v1.14 that is this feature gate;
+  # v1.15 and later replace it with config.enableGatewayAPI.
+  dynamic "set" {
+    for_each = var.ingress_controller == "envoy-gateway" ? [1] : []
+    content {
+      name  = "featureGates"
+      value = "ExperimentalGatewayAPISupport=true"
+    }
   }
 
   # DNS-01 via Azure Workload Identity: annotate the cert-manager service account
@@ -405,6 +432,8 @@ resource "helm_release" "cert_manager" {
 # based on Redis queue depth.
 
 resource "helm_release" "keda" {
+  count = var.install_keda ? 1 : 0
+
   name             = "keda"
   namespace        = "keda"
   create_namespace = true

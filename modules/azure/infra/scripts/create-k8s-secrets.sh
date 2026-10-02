@@ -23,25 +23,25 @@ set -euo pipefail
 #
 # The other two required secrets are created by Terraform (Pass 1):
 #   langsmith-postgres-secret — connection_url
-#   langsmith-redis-secret    — connection_url
+#   langsmith-redis-secret    — connection_url, redis_cluster_node_uris,
+#                               redis_cluster_password
 #
 # Safe to re-run — uses --dry-run=client | kubectl apply so it updates in place.
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; NC='\033[0m'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INFRA_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 source "$SCRIPT_DIR/_common.sh"
 
 # ── Resolve Key Vault name from terraform output ───────────────────────────────
-if ! KV_NAME=$(cd "$INFRA_DIR" && terraform output -raw keyvault_name 2>/dev/null); then
-  KV_NAME=$(_derive_kv_name)
+if ! KV_NAME=$(_tf_out keyvault_name); then
+  KV_NAME=$(_require_kv_name) || exit 1
   echo "  (terraform output unavailable — using derived KV name: $KV_NAME)"
 fi
 
 # ── Resolve namespace ──────────────────────────────────────────────────────────
-NAMESPACE=$(cd "$INFRA_DIR" && terraform output -raw langsmith_namespace 2>/dev/null) || NAMESPACE="langsmith"
+NAMESPACE=$(_tf_out langsmith_namespace) || NAMESPACE="langsmith"
 
 echo ""
 echo "LangSmith — create K8s config secret"
